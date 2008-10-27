@@ -1,0 +1,405 @@
+#!/usr/bin/perl -w
+# git-map - performs commands on git working trees en masse
+# Copyright (C) 2008 by Michael Clarke <clarkema@gmail.com>
+# Maintainer: Michael Clarke <clarkema@gmail.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor,
+# Boston, MA  02110-1301, USA.
+
+
+# Version the file.
+# Best practices use the CPAN version module with three parts to the version
+# number.  KEEP THIS ALL ON ONE LINE OR MODULE LOADERS WILL FAIL.
+use version; our $VERSION = qv('0.0.1');
+
+# Use strict and detect problems like we mean it.
+# There is no such thing as "just a warning" -- if the code is not clean then
+# the code is not right.  All warnings are on, all warnings are errors.
+use strict;
+use warnings 'all';
+use warnings FATAL => 'all';
+
+# Use locale-aware sorting and string collation.
+# If you're not sure what this does then don't touch it.
+use locale;
+
+# Only English (extended) variable names will be used for pre-defined
+# variables.  Random symbol variables are not acceptable.
+use English qw( -no_match_vars );
+
+# Use Smart Comments for assertions and program tracing as follows:
+# ###   - simple assertions which can be left on in a production environment
+# ####  - any contractual assertions not covered above
+# ##### - non-simple non-contractual assertions, program tracing, debugging
+#use Smart::Comments '###';
+
+# Use Readonly, not the 'constant' pragma for constants.
+#use Readonly;
+
+# Core/CPAN modules to import
+use Cwd                   qw( abs_path cwd );
+use File::chdir;
+use File::Spec::Functions qw( catdir );
+use Getopt::Long;
+use Pod::Usage;
+use Term::ANSIColor;
+
+# Local/application modules to import
+
+# Help option variables
+my $help;
+my $usage;
+my $version;
+
+# Application option variables
+my $GIT = 'git';
+my $root_dir = cwd();
+
+# Program option variables
+my $options_successful = GetOptions(
+    # Help options - these take priority with standard 
+    'h|help'           => \$help,
+    'u|usage'          => \$usage,
+    'v|version'        => \$version,
+    'r|root-dir:s'     => \$root_dir,
+    # Program options
+);
+
+if ( not $options_successful ) {
+    pod2usage( { -exitval => 1, -verbose => 0, -output => \*STDERR } );
+}
+
+if ( $help ) {
+    pod2usage( { -exitval => 1, -verbose => 2, -output => \*STDOUT } );
+}
+
+if ( $usage ) {
+    pod2usage( { -exitval => 1, -verbose => 0, -output => \*STDERR } );
+}
+
+# Check number of non-option arguments here
+#if ( @ARGV == 0 or @ARGV > 1 ) {
+#    pod2usage( { -exitval => 1, -verbose => 0, -output => \*STDERR } );
+#}
+
+if ( $version ) {
+    print {*STDERR} "git-map version $VERSION by Michael Clarke\n";
+    exit 1;
+}
+
+my $command = $ARGV[0] || 'summary';
+
+my %action = (
+    list        => sub { cmd_list( @_ );    },
+    fetch       => sub { cmd_fetch( @_ );   },
+    summary     => sub { cmd_summary( @_ ); },
+    __DEFAULT__ => sub { cmd_default( @_ ); },
+);
+
+my @trees = find_working_trees( abs_path( $root_dir ) );
+
+my $foo = $action{$command} || $action{'__DEFAULT__'};
+$foo->({
+    command => $command,
+});
+
+exit;
+
+sub cmd_list { print "$_\n" foreach ( sort @trees ) }
+
+sub cmd_fetch
+{
+    my $params_ref = shift;
+
+    foreach my $tree ( sort @trees ) {
+        local $CWD = $tree;
+        my @remotes = git_get_remotes();
+
+        if ( @remotes ) {
+            foreach my $remote ( @remotes ) {
+                print "$tree: fetching $remote";
+                system( "$GIT fetch -q $remote" );
+            }
+        }
+        else {
+            print "$tree:", colored ['red'], " no remotes speficied!\n";
+        }
+    }
+}
+
+sub cmd_default
+{
+    my $params_ref = shift;
+    my $command = $params_ref->{'command'};
+
+    foreach my $tree ( sort @trees ) {
+        local $CWD = $tree;
+
+        print colored ['blue'], $tree, "\n";
+        system( "$GIT $command" );
+    }
+}
+
+sub cmd_summary
+{
+    foreach my $tree ( sort @trees ) {
+        local $CWD = $tree;
+
+        # First check whether there are any untracked files -- 
+        # git diff-index doesn't detect these.
+        if ( git_has_untracked_files() ) {
+            print colored ['red'], " D";
+            print " $tree\n";
+            next;
+        }
+
+        system( "$GIT update-index -q --refresh" );
+
+        # The redirection is somewhat dirty; but is designed to eat the error
+        # message that occurs if there is no HEAD yet.
+        system( "$GIT diff-index --quiet HEAD 2> /dev/null" );
+
+        if ( $CHILD_ERROR == -1 ) {
+            print STDERR "Failed to execute $GIT: $OS_ERROR\n";
+        }
+        elsif ( $CHILD_ERROR & 127 ) {
+            printf STDERR "Child died with signal %d\n", ( $CHILD_ERROR & 127 );
+        }
+        else {
+            my $exit_code = $CHILD_ERROR >> 8;
+
+            print " ";
+            if ( $exit_code == 0 ) {
+                if ( git_have_stash() ) {
+                    print colored ['yellow'], "S";
+                }
+                else {
+                    print colored ['green'], "C";
+                }
+            }
+            elsif ( $exit_code == 1 ) {
+                print colored ['red'], "D";
+            }
+            else {
+                print colored ['red'], "?";
+            }
+            print " $tree\n";
+        }
+    }
+}
+
+sub git_have_stash
+{
+    my $ref_stash = 'refs/stash';
+    system( "$GIT rev-parse --verify $ref_stash > /dev/null 2>&1" );
+
+    if ( $CHILD_ERROR == -1 ) {
+        print STDERR "Failed to execute $GIT: $OS_ERROR\n";
+    }
+    elsif ( $CHILD_ERROR & 127 ) {
+        printf STDERR "Child died with signal %d\n", ( $CHILD_ERROR & 127 );
+    }
+
+    return ( $CHILD_ERROR >> 8 ) == 0;
+}
+
+sub git_has_untracked_files
+{
+    my $files = qx( $GIT ls-files -o 2> /dev/null );
+
+    return $files ? 1 : 0;
+}
+
+sub git_get_remotes
+{
+    my @remotes = qx($GIT remote 2> /dev/null);
+
+    return @remotes;
+}
+
+sub find_working_trees
+{
+	my ($search_root, $filter) = @_;
+    my @list;
+
+    if ( -d $search_root ) {
+        opendir( my $dir, $search_root )
+            or die( "Failed to open $search_root: $OS_ERROR!" );
+
+        while ( my $file = readdir( $dir ) ) {
+            next if $file =~ m/^\.+$/;
+
+            my $full_path = catdir( abs_path( $search_root ), $file );
+
+            if ( is_working_tree( $full_path ) ) {
+                push @list, $full_path;
+            }
+            elsif ( -d $full_path ) {
+                push @list, find_working_trees( $full_path );
+            }
+
+        }
+        closedir( $dir );
+    }
+
+    return @list;
+}
+
+# Subroutine and remainder of comments from gitweb.perl
+#
+# checking HEAD file with -e is fragile if the repository was
+# initialized long time ago (i.e. symlink HEAD) and was pack-ref'ed
+# and then pruned.
+sub is_git_repo
+{
+	my ($dir) = @_;
+	my $headfile = "$dir/HEAD";
+	return ((-e $headfile) ||
+		(-l $headfile && readlink($headfile) =~ /^refs\/heads\//));
+}
+
+sub is_working_tree
+{
+    my $dir = shift;
+    my $repo = catdir( $dir, '.git' );
+
+    return ( -d $repo and is_git_repo( $repo ) );
+}
+
+__END__
+
+=head1 NAME
+
+git-map - performs commands on git working trees en masse
+
+=cut
+
+=head1 SYNOPSIS
+
+B<git-map> S<[options]> COMMAND
+
+=cut
+
+=head1 DESCRIPTION
+
+git-map is modelled after the map function of various languages, especially
+Perl.  It is designed to ease the management of large numbers of git working
+trees, by allowing the user to run commands across all the trees
+under a given directory.
+
+For example, suppose you have git working directories `foo', `bar', and `baz'
+in $HOME/git.  Running `git fetch' on all of them to ensure you are up to date
+is as simple as:
+
+ $ cd $HOME/git
+ $ git-map fetch
+
+This example could have been accomplished using a shell loop, but git-map is
+capable of finding working directories organized into a tree structure.  
+
+git-map also offers a series of summarization commands, allowing the user to
+rapidly get an overview of the state of their working directories.
+
+=cut
+
+=head1 OPTIONS
+
+=over
+
+=item B<-h>, B<--help>
+
+Print the help and exit.
+
+=item B<-u>, B<--usage>
+
+Print a brief usage summary and exit.
+
+=item B<-v>, B<--version>
+
+Print the version string and exit.
+
+=item B<-r>, B<--root-dir>
+
+Specify the directory to look for working trees in.  Defaults to the current
+directory.
+
+=back
+
+=cut
+
+=head1 COMMANDS
+
+=over
+
+=item fetch
+
+For each remote in each repository found, run `git fetch $remote'
+
+=item list
+
+List all of the working trees found, one per line.
+
+=item summary
+
+Print out a tabular summary of the state of the working trees found, in the
+form:
+
+  X  /full/path/to/working/tree
+
+where X is a status code.  Valid status codes are:
+
+  C - clean -- all changes are checked in locally, and there are no stashes.
+  S - stashes -- all changes are checked in locally, but there are stashes.
+  D - dirty -- there are un-checked-in changes.
+
+=item DEFAULT
+
+The default action, if COMMAND is not recognized, is to chdir to each working tree
+in turn, and run `git COMMAND'.
+
+=back
+
+=cut
+
+=head1 BUGS
+
+Please report bugs to <clarkema@gmail.com>.
+
+=cut
+
+=head1 AUTHOR
+
+Written by Michael Clarke.
+
+=cut
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2008, Michael Clarke <clarkema@gmail.com>
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor,
+Boston, MA  02110-1301, USA.
