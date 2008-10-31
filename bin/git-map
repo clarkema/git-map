@@ -362,7 +362,7 @@ where X is a status code.  Valid status codes are:
 
   C - clean -- all changes are checked in locally, and there are no stashes.
   S - stashes -- all changes are checked in locally, but there are stashes.
-  D - dirty -- there are un-checked-in changes.
+  D - dirty -- there are uncommited changes.
 
 =item DEFAULT
 
