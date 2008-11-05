@@ -22,7 +22,7 @@
 # Version the file.
 # Best practices use the CPAN version module with three parts to the version
 # number.  KEEP THIS ALL ON ONE LINE OR MODULE LOADERS WILL FAIL.
-use version; our $VERSION = qv('0.0.1');
+use version; our $VERSION = qv('0.0.2');
 
 # Use strict and detect problems like we mean it.
 # There is no such thing as "just a warning" -- if the code is not clean then
@@ -154,6 +154,12 @@ sub cmd_default
 
 sub cmd_summary
 {
+    my %sync_status_colour = (
+        N => ['yellow'],
+        U => ['red'],
+        S => ['green'],
+    );
+
     foreach my $tree ( sort @trees ) {
         local $CWD = $tree;
 
@@ -161,42 +167,44 @@ sub cmd_summary
         # git diff-index doesn't detect these.
         if ( git_has_untracked_files() ) {
             print colored ['red'], " D";
-            print " $tree\n";
-            next;
-        }
-
-        system( "$GIT update-index -q --refresh" );
-
-        # The redirection is somewhat dirty; but is designed to eat the error
-        # message that occurs if there is no HEAD yet.
-        system( "$GIT diff-index --quiet HEAD 2> /dev/null" );
-
-        if ( $CHILD_ERROR == -1 ) {
-            print STDERR "Failed to execute $GIT: $OS_ERROR\n";
-        }
-        elsif ( $CHILD_ERROR & 127 ) {
-            printf STDERR "Child died with signal %d\n", ( $CHILD_ERROR & 127 );
         }
         else {
-            my $exit_code = $CHILD_ERROR >> 8;
+            system( "$GIT update-index -q --refresh" );
 
-            print " ";
-            if ( $exit_code == 0 ) {
-                if ( git_have_stash() ) {
-                    print colored ['yellow'], "S";
-                }
-                else {
-                    print colored ['green'], "C";
-                }
+            # The redirection is somewhat dirty; but is designed to eat the error
+            # message that occurs if there is no HEAD yet.
+            system( "$GIT diff-index --quiet HEAD 2> /dev/null" );
+
+            if ( $CHILD_ERROR == -1 ) {
+                print STDERR "Failed to execute $GIT: $OS_ERROR\n";
             }
-            elsif ( $exit_code == 1 ) {
-                print colored ['red'], "D";
+            elsif ( $CHILD_ERROR & 127 ) {
+                printf STDERR "Child died with signal %d\n", ( $CHILD_ERROR & 127 );
             }
             else {
-                print colored ['red'], "?";
+                my $exit_code = $CHILD_ERROR >> 8;
+
+                print " ";
+                if ( $exit_code == 0 ) {
+                    if ( git_have_stash() ) {
+                        print colored ['yellow'], "S";
+                    }
+                    else {
+                        print colored ['green'], "C";
+                    }
+                }
+                elsif ( $exit_code == 1 ) {
+                    print colored ['red'], "D";
+                }
+                else {
+                    print colored ['red'], "?";
+                }
             }
-            print " $tree\n";
         }
+
+        my $sync_status = git_ref_sync_status();
+        print colored $sync_status_colour{$sync_status}, $sync_status;
+        print " $tree\n";
     }
 }
 
@@ -227,6 +235,63 @@ sub git_get_remotes
     my @remotes = qx($GIT remote 2> /dev/null);
 
     return @remotes;
+}
+
+# N = There are no remotes specified, or there are local refs that do not
+#     exist at any remote
+# U = There are local refs, but they are not all up to date with corresponding
+#     remotes
+# S = Local refs are synced with corresponding remote ones
+sub git_ref_sync_status
+{
+    my %local_refs;
+    my %remote_refs;
+
+    # Scan all the refs in the repository into two hashes; one of local
+    # refs, and one of remote refs.
+    foreach my $line ( qx( $GIT show-ref ) ) {
+        my ($hash, $ref) = $line =~ m{^([A-Za-z0-9]+)\s+(\S+)$};
+        next unless $hash and $ref;
+
+        next if $ref =~ m{^refs/tags};
+
+        if ( $ref =~ m{refs/heads/(.+)} ) {
+            $local_refs{$1} = $hash;
+        }
+
+        if ( $ref =~ m{refs/remotes/(.+?)/(.+)} ) {
+            $remote_refs{$1}{$2} = $hash;
+        }
+    }
+
+    # For each local ref:
+    #
+    # 1.  Does it exist at any of the remotes?
+    # 2.  If so, is the hash the same?
+    while ( my ($local_ref, $local_hash) = each %local_refs ) {
+        my $exists_remotely = 0;
+
+        foreach my $remote ( keys %remote_refs ) {
+            if ( exists $remote_refs{$remote}{$local_ref} ) {
+                $exists_remotely = 1;
+
+                if ( $remote_refs{$remote}{$local_ref} eq $local_hash ) {
+                    # The local ref is up to date with this particular remote
+                }
+                else {
+                    # local ref out of sync with $remote
+                    return 'U';
+                }
+            }
+        }
+
+        if ( not $exists_remotely ) {
+            # Local ref does not exist at any remote
+            return 'N';
+        }
+    }
+
+    return 'S';
 }
 
 sub find_working_trees
@@ -356,13 +421,22 @@ List all of the working trees found, one per line.
 Print out a tabular summary of the state of the working trees found, in the
 form:
 
-  X  /full/path/to/working/tree
+  XY  /full/path/to/working/tree
 
-where X is a status code.  Valid status codes are:
+X is one of:
 
   C - clean -- all changes are checked in locally, and there are no stashes.
   S - stashes -- all changes are checked in locally, but there are stashes.
   D - dirty -- there are uncommited changes.
+
+Y is one of:
+
+  N - the repository has no remotes; or, there exist local refs that do not
+      appear in any of the specified remotes.
+  U - all local refs have corresponding refs in one or more remotes, but they
+      are not synchronized.
+  S - all local refs have corresponding refs in one or more remotes, and
+      all are synchronized.
 
 =item DEFAULT
 
