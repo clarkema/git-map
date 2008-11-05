@@ -217,7 +217,7 @@ sub git_have_stash
 
 sub git_has_untracked_files
 {
-    my $files = qx( $GIT ls-files -o 2> /dev/null );
+    my $files = qx( $GIT ls-files -o --exclude-standard 2> /dev/null );
 
     return $files ? 1 : 0;
 }
