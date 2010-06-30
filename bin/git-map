@@ -22,7 +22,7 @@
 # Version the file.
 # Best practices use the CPAN version module with three parts to the version
 # number.  KEEP THIS ALL ON ONE LINE OR MODULE LOADERS WILL FAIL.
-use version; our $VERSION = qv('0.0.2');
+use version; our $VERSION = qv('0.0.3');
 
 # Use strict and detect problems like we mean it.
 # There is no such thing as "just a warning" -- if the code is not clean then
@@ -110,10 +110,13 @@ my %action = (
 
 my @trees = find_working_trees( abs_path( $root_dir ) );
 
-my $foo = $action{$command} || $action{'__DEFAULT__'};
-$foo->({
-    command => $command,
-});
+if ( defined $action{$command} ) {
+    $action{$command}->()
+}
+else {
+    $action{'__DEFAULT__'}->( @ARGV )
+}
+
 
 exit;
 
@@ -141,14 +144,13 @@ sub cmd_fetch
 
 sub cmd_default
 {
-    my $params_ref = shift;
-    my $command = $params_ref->{'command'};
+    my @command = @_;
 
     foreach my $tree ( sort @trees ) {
         local $CWD = $tree;
 
         print colored ['blue'], $tree, "\n";
-        system( "$GIT $command" );
+        system( $GIT, @command );
     }
 }
 
@@ -440,8 +442,13 @@ Y is one of:
 
 =item DEFAULT
 
-The default action, if COMMAND is not recognized, is to chdir to each working tree
-in turn, and run `git COMMAND'.
+The default action, if COMMAND is not recognized, is to chdir to each working
+tree in turn, and run `git COMMAND'.
+
+To run a git command with options, you must first signal that there are no
+more git-map options with `--'.  For example:
+
+  git-map -- log --since=2010-01-01 --author='Kimball'
 
 =back
 
