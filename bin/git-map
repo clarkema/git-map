@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 # git-map - performs commands on git working trees en masse
-# Copyright (C) 2008 by Michael Clarke <clarkema@gmail.com>
+# Copyright (C) 2008, 2010 by Michael Clarke <clarkema@gmail.com>
 # Maintainer: Michael Clarke <clarkema@gmail.com>
 #
 # This program is free software; you can redistribute it and/or
@@ -468,7 +468,7 @@ Written by Michael Clarke.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008, Michael Clarke <clarkema@gmail.com>
+Copyright (C) 2008, 2010 Michael Clarke <clarkema@gmail.com>
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
