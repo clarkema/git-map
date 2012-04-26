@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 # git-map - performs commands on git working trees en masse
-# Copyright (C) 2008, 2010 by Michael Clarke <clarkema@gmail.com>
+# Copyright (C) 2008, 2010, 2012 by Michael Clarke <clarkema@gmail.com>
 # Maintainer: Michael Clarke <clarkema@gmail.com>
 #
 # This program is free software; you can redistribute it and/or
@@ -427,23 +427,25 @@ form:
 
 X is one of:
 
-  C - clean -- all changes are checked in locally, and there are no stashes.
-  S - stashes -- all changes are checked in locally, but there are stashes.
+  C - clean -- all changes are checked in locally, and there are no
+      stashes.
+  S - stashes -- all changes are checked in locally, but there are
+      stashes.
   D - dirty -- there are uncommited changes.
 
 Y is one of:
 
-  N - the repository has no remotes; or, there exist local refs that do not
-      appear in any of the specified remotes.
-  U - all local refs have corresponding refs in one or more remotes, but they
-      are not synchronized.
-  S - all local refs have corresponding refs in one or more remotes, and
-      all are synchronized.
+  N - the repository has no remotes; or, there exist local refs that
+      do not appear in any of the specified remotes.
+  U - all local refs have corresponding refs in one or more remotes,
+      but they are not synchronized.
+  S - all local refs have corresponding refs in one or more remotes,
+      and all are synchronized.
 
 =item DEFAULT
 
 The default action, if COMMAND is not recognized, is to chdir to each working
-tree in turn, and run `git COMMAND'.
+tree in turn and run `git COMMAND'.
 
 To run a git command with options, you must first signal that there are no
 more git-map options with `--'.  For example:
