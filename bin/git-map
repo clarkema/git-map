@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#! /usr/bin/env perl
 # git-map - performs commands on git working trees en masse
 # Copyright (C) 2008, 2010, 2012 by Michael Clarke <clarkema@gmail.com>
 # Maintainer: Michael Clarke <clarkema@gmail.com>
